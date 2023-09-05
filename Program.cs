@@ -266,9 +266,22 @@ app.MapPut("/servicetickets/{id}", (int id, ServiceTicket serviceTicket) =>
     // so we grabbed the ticket by id...then grabbed the id itself off that ticket...now we need to update the service ticket somehow. We insert the integer (held in ticketIndex) to tell serviceTickets which index to go to....then make it equal an individual serviceTicket. Essentially, whatever new data we give it in Postman (employee id for example) is brought in with the serviceTicket as the new serviceTicket object....so it overwrites the old one.
     serviceTickets[ticketIndex] = serviceTicket;
     return Results.Ok();
-
 }
 );
+
+
+//^ ENDPOINT - add a custom endpoint that will complete a ticket AND log the date it was completed
+app.MapPost("/servicetickets/{id}/complete", (int id) => //we just created a new endpoint by adding /complete after the service ticket id
+{
+    //get the service ticket from the database that needs to be completed
+    ServiceTicket ticketToComplete = serviceTickets.FirstOrDefault( st => st.Id == id); //ServiceTicket is the class/type of object
+    ticketToComplete.DateCompleted = DateTime.Today; // this updates the DateCompleted property of the serviceTicket we grabbed
+});
+
+
+
+
+
 
 app.Run();
 

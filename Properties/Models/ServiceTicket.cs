@@ -9,4 +9,4 @@ public class ServiceTicket {
     public DateTime DateCompleted { get; set; }
     public Employee Employee { get; set; }
     public Customer Customer { get; set; } //this brings in the Customer class with its properties on each customer instance
-}
+} 
