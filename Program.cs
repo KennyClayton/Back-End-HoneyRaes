@@ -1,6 +1,9 @@
+using Npgsql; //This is a library that works with C# language and SQL databases. It allows me to use keywords to query the PostegrSQL database...words like SELECT and FROM...
+//"Npgsql is a .NET Data Provider for PostgreSQL, which allows you to connect to and interact with PostgreSQL databases from C# code." "In summary, Npgsql is used in your C# code to connect to the PostgreSQL database, execute SQL queries, and retrieve data. Npgsql provides the necessary classes and methods to interact with the database seamlessly from your C# application."
 using System.Text.Json.Serialization;
 using HoneyRaesAPI.Models;
 using Microsoft.AspNetCore.Http.Json;
+var connectionString = "Host=localhost;Port=5432;Username=postgres;Password=dukebd11-11;Database=HoneyRaes";
 
 var builder = WebApplication.CreateBuilder(args);
 //
@@ -153,27 +156,185 @@ app.MapGet("/servicetickets/{id}", (int id) =>
 });
 
 
-//^ ENDPOINT - add endpoint to GET employees
+//^ NEW ENDPOINT - get all employees
 app.MapGet("/employees", () =>
 {
+    // create an empty list of employees to add to. 
+    List<Employee> employees = new List<Employee>();
+    //make a connection to the PostgreSQL database using the connection string
+    using NpgsqlConnection connection = new NpgsqlConnection(connectionString);
+    //open the connection
+    connection.Open();
+    // create a sql command to send to the database
+    using NpgsqlCommand command = connection.CreateCommand();
+    command.CommandText = "SELECT * FROM Employee";
+    //send the command. 
+    using NpgsqlDataReader reader = command.ExecuteReader();
+    //read the results of the command row by row
+    while (reader.Read()) // reader.Read() returns a boolean, to say whether there is a row or not, it also advances down to that row if it's there. 
+    {
+        //This code adds a new C# employee object with the data in the current row of the data reader 
+        employees.Add(new Employee
+        {
+            Id = reader.GetInt32(reader.GetOrdinal("Id")), //find what position the Id column is in, then get the integer stored at that position
+            Name = reader.GetString(reader.GetOrdinal("Name")),
+            Specialty = reader.GetString(reader.GetOrdinal("Specialty"))
+        });
+    }
+    //once all the rows have been read, send the list of employees back to the client as JSON
     return employees;
 });
 
 
-//^ ENDPOINT - add endpoint to GET employees by id
-//* ROUTE PARAMETER
-//From curriculum: "This endpoint introduces some complexity. In the route the {id} part of the string is called a route parameter."
+// //^ OLD ENDPOINT - add endpoint to GET employees
+// app.MapGet("/employees", () =>
+// {
+//     return employees;
+// });
+
+
+
+//^ NEW ENDPOINT - get employee by Id
+//* Explanation for ths new endpoint: "This code block largely follows the same patterns as the previous endpoint. We need to create a connection, open it, and create a command."
 app.MapGet("/employees/{id}", (int id) =>
 {
-    Employee employee = employees.FirstOrDefault(e => e.Id == id);
-    if (employee == null)
+    Employee employee = null;
+    using NpgsqlConnection connection = new NpgsqlConnection(connectionString);
+    connection.Open();
+    using NpgsqlCommand command = connection.CreateCommand();
+    command.CommandText = @"
+        SELECT 
+            e.Id,
+            e.Name, 
+            e.Specialty, 
+            st.Id AS serviceTicketId, 
+            st.CustomerId,
+            st.Description,
+            st.Emergency,
+            st.DateCompleted 
+        FROM Employee e
+        LEFT JOIN ServiceTicket st ON st.EmployeeId = e.Id
+        WHERE e.Id = @id";
+    // use command parameters to add the specific Id we are looking for to the query
+    command.Parameters.AddWithValue("@id", id);
+    using NpgsqlDataReader reader = command.ExecuteReader();
+    // We are only expecting one row back, so we don't need a loop!
+    while (reader.Read())
     {
-        return Results.NotFound();
+        if (employee == null)
+        {
+            employee = new Employee
+            {
+                Id = reader.GetInt32(reader.GetOrdinal("Id")),
+                Name = reader.GetString(reader.GetOrdinal("Name")),
+                Specialty = reader.GetString(reader.GetOrdinal("Specialty")),
+                ServiceTickets = new List<ServiceTicket>() //empty List to add service tickets to
+            };
+        }
+        // reader.IsDBNull checks if a column in a particular position is null
+        if (!reader.IsDBNull(reader.GetOrdinal("serviceTicketId")))
+        {
+            employee.ServiceTickets.Add(new ServiceTicket
+            {
+                Id = reader.GetInt32(reader.GetOrdinal("serviceTicketId")),
+                CustomerId = reader.GetInt32(reader.GetOrdinal("CustomerId")),
+                //we don't need to get this from the database, we already know it
+                EmployeeId = id,
+                Description = reader.GetString(reader.GetOrdinal("Description")),
+                Emergency = reader.GetBoolean(reader.GetOrdinal("Emergency")),
+                // Npgsql can't automatically convert NULL in the database to C# null, so we have to check whether it's null before trying to get it
+                DateCompleted = reader.IsDBNull(reader.GetOrdinal("DateCompleted")) ? null : reader.GetDateTime(reader.GetOrdinal("DateCompleted"))
+            });
+        }
     }
-    //^ METHOD / FIND the tickets assigned to this employee with WHERE method (recall this is a Linq method that finds/returns more than just one match)
-    employee.ServiceTickets = serviceTickets.Where(st => st.EmployeeId == id).ToList(); // this code gets us the related service tickets for the current employee and adds those service tickets to the employee's service tickets array/list of service tickets
-    return Results.Ok(employee);
+     // Return 404 if the employee is never set (meaning, that reader.Read() immediately returned false because the id did not match an employee)
+    // otherwise 200 with the employee data
+    return employee == null ? Results.NotFound() : Results.Ok(employee);
 });
+
+
+// //^ OLD ENDPOINT - add endpoint to GET employees by id
+// //* ROUTE PARAMETER
+// //From curriculum: "This endpoint introduces some complexity. In the route the {id} part of the string is called a route parameter."
+// app.MapGet("/employees/{id}", (int id) =>
+// {
+//     Employee employee = employees.FirstOrDefault(e => e.Id == id);
+//     if (employee == null)
+//     {
+//         return Results.NotFound();
+//     }
+//     //^ METHOD / FIND the tickets assigned to this employee with WHERE method (recall this is a Linq method that finds/returns more than just one match)
+//     employee.ServiceTickets = serviceTickets.Where(st => st.EmployeeId == id).ToList(); // this code gets us the related service tickets for the current employee and adds those service tickets to the employee's service tickets array/list of service tickets
+//     return Results.Ok(employee);
+// });
+
+
+
+//^NEW ENDPOINT - Create a new employee
+app.MapPost("/employees", (Employee employee) =>
+{
+    using NpgsqlConnection connection = new NpgsqlConnection(connectionString);
+    connection.Open();
+    using NpgsqlCommand command = connection.CreateCommand();
+    command.CommandText = @"
+        INSERT INTO Employee (Name, Specialty)
+        VALUES (@name, @specialty)
+        RETURNING Id
+    ";
+    //? why do we add a return above? "We add RETURNING Id to the end of the query so that we get the new Id for the employee back after it has been created."
+    command.Parameters.AddWithValue("@name", employee.Name);
+    command.Parameters.AddWithValue("@specialty", employee.Specialty);
+
+    //the database will return the new Id for the employee, add it to the C# object
+    employee.Id = (int)command.ExecuteScalar();
+
+    return employee;
+});
+
+
+
+//^NEW ENDPOINT - Update an employee
+app.MapPut("/employees/{id}", (int id, Employee employee) =>
+{
+    if (id != employee.Id)
+    {
+        return Results.BadRequest();
+    }
+    using NpgsqlConnection connection = new NpgsqlConnection(connectionString);
+    connection.Open();
+    using NpgsqlCommand command = connection.CreateCommand();
+    command.CommandText = @"
+        UPDATE Employee 
+        SET Name = @name,
+            Specialty = @specialty
+        WHERE Id = @id
+    ";
+    // above: "We need to provide the id to the database to make sure we only update one employee. Without the WHERE, it would update every row with this data"
+    command.Parameters.AddWithValue("@name", employee.Name);
+    command.Parameters.AddWithValue("@specialty", employee.Specialty);
+    command.Parameters.AddWithValue("@id", id);
+
+    command.ExecuteNonQuery(); // this "is used for data changes when you do not need or expect any data back from the database after the query. In this case, as long as the query runs correctly, we do not need any information from the database."
+    return Results.NoContent(); // "For the same reason, we return a 204 response No Content back to the client, because it is also not going to learn anything new from the response."
+});
+
+
+
+
+//^NEW ENDPOINT - Delete an employee
+app.MapDelete("/employees/{id}", (int id) =>
+{
+    using NpgsqlConnection connection = new NpgsqlConnection(connectionString);
+    connection.Open();
+    using NpgsqlCommand command = connection.CreateCommand();
+    command.CommandText = @"
+        DELETE FROM Employee WHERE Id=@id
+    ";
+    command.Parameters.AddWithValue("@id", id);
+    command.ExecuteNonQuery(); //"We again use ExecuteNonQuery because we don't need any information back from the database so long as the delete operation was successful."
+    return Results.NoContent(); // "The handler returns 204 No Content because we want to send a success message that is not going to have a body."
+});
+
 
 
 
